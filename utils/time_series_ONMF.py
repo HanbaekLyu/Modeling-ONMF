@@ -74,26 +74,8 @@ class ONMF_timeseries_reconstructor():
 
         input_variable_list = []
 
-        if data_source == 'COVID_ACT_NOW':
-            print('LOADING.. COVID_ACT_NOW')
-            self.input_variable_list = ['input_hospitalBedsRequired',
-                                        'input_ICUBedsInUse',
-                                        'input_ventilatorsInUse',
-                                        'input_Deaths',
-                                        'input_Infected']
-            self.df = covid_dataprocess.read_data_COVIDactnow_NYT()
-            self.df = self.truncate_NAN_DataFrame()
-            self.df = self.moving_avg_log_scale()
-            self.data_test = self.extract_ndarray_from_DataFrame()
-            self.result_dict.update({'Data source': 'COVID_ACT_NOW'})
-            self.result_dict.update({'Full DataFrame': self.df})
-            self.result_dict.update({'Data array': self.data_test})
-            self.result_dict.update({'List_states': self.state_list})
-            self.result_dict.update({'List_variables': self.input_variable_list})
 
-
-
-        elif data_source == 'COVID_TRACKING_PROJECT':
+        if data_source == 'COVID_TRACKING_PROJECT':
             print('LOADING.. COVID_TRACKING_PROJECT')
             self.input_variable_list = ['input_hospitalized_Currently',
                                         'input_inICU_Currently',
@@ -272,102 +254,6 @@ class ONMF_timeseries_reconstructor():
 
         return data_new.T, country_list
 
-    def read_data_COVIDactnow(self, path, use_NYT_cases=False):
-        '''
-        Read input time series data as a dictionary of pandas dataframe
-        COVIDACTNOW is a SYNTHETIC data!!!
-        That's why the cases and deaths are off from the real data, expecially for the NO_INTERVENTION case
-        '''
-        data = pd.read_csv(path, delimiter=',')
-        df = {}
-        data_NYT = pd.read_csv("Data/NYT_us-states.csv", delimiter=',')
-
-        if self.state_list == None:
-            self.state_list = sorted([i for i in set([i for i in data['stateName']])])
-
-        ### Find earliest starting date of the data
-        start_dates = []
-        for state in self.state_list:
-            df1 = data.loc[data['stateName'] == state]
-            start_dates.append(min(df1['date']))
-        max_min_date = max(start_dates)
-        # print('!!! min_dates', max_min_date)
-
-        for state in self.state_list:
-            df1 = data.loc[data['stateName'] == state].set_index('date')
-            lastUpdatedDate = df1['lastUpdatedDate'].iloc[0]
-            df1 = df1[max_min_date:lastUpdatedDate]
-            df1['input_hospitalBedsRequired'] = df1['hospitalBedsRequired']
-            df1['input_ICUBedsInUse'] = df1['ICUBedsInUse']
-            df1['input_ventilatorsInUse'] = df1['ventilatorsInUse']
-            if not use_NYT_cases:
-                df1['input_Deaths'] = df1['cumulativeDeaths']
-                df1['input_Infected'] = df1['cumulativeInfected']
-            else:
-                df_NYT1 = data_NYT.loc[data_NYT['state'] == state].set_index('date')
-                df1['input_Deaths'] = df_NYT1['deaths']
-                print('!!! df_NYT1', df_NYT1['deaths'])
-                df1['input_Infected'] = df_NYT1['cases']
-                print('!!! df_NYT1_cases', df_NYT1['cases'])
-
-            ### Take the maximal sub-dataframe that does not contain NAN
-            max_index = []
-            for column in self.input_variable_list:
-                l = df1[column][df1[column].notnull()].index[-1]
-                max_index.append(l)
-            max_index = min(max_index)
-            print('!!! max_index', max_index)
-            df1 = df1[:max_index]
-
-            print('!!! If any value is NAN:', df1.isnull())
-            df.update({state: df1})
-
-        if self.if_onlynewcases:
-            for state in self.state_list:
-                df1 = df.get(state)
-                # df1[input_variable_list] contains 153 rows and 5 columns
-                df1['input_Infected'] = df1['input_Infected'].diff()
-                df1['input_Deaths'] = df1['input_Deaths'].diff()
-                df1 = df1.fillna(0)
-                df.update({state: df1})
-
-        if self.if_moving_avg_data:
-            for state in self.state_list:
-                df1 = df.get(state)
-                df2 = df1[self.input_variable_list]
-                df2 = df2.rolling(window=5, win_type=None).sum() / 5  ### moving average with backward window size 5
-                df2 = df2.fillna(0)
-                df1[self.input_variable_list] = df2
-                df.update({state: df1})
-
-        if self.if_log_scale:
-            for state in self.state_list:
-                df1 = df.get(state)
-                df2 = df1[self.input_variable_list]
-                df2 = np.log(df2 + 1)
-                df1[self.input_variable_list] = df2
-                df.update({state: df1})
-
-        self.df = df
-
-        ## Make numpy array of shape States x Days x variables
-        data_combined = []
-        for state in self.state_list:
-            df1 = df.get(state)
-
-            if state == self.state_list[0]:
-                data_combined = df1[self.input_variable_list].values  ## shape Days x variables
-                data_combined = np.expand_dims(data_combined, axis=0)
-                print('!!!Data_combined.shape', data_combined.shape)
-            else:
-                data_new = df1[self.input_variable_list].values  ## shape Days x variables
-                data_new = np.expand_dims(data_new, axis=0)
-                print('!!! Data_new.shape', data_new.shape)
-                data_combined = np.append(data_combined, data_new, axis=0)
-
-        self.data_test = data_combined
-        return df, data_combined
-
     def read_data_COVIDtrackingProject(self, path):
         '''
         Read input time series data as a dictionary of pandas dataframe
@@ -439,27 +325,6 @@ class ONMF_timeseries_reconstructor():
         self.data_test = data_combined
         return df, data_combined
 
-    def read_data_as_array_citywise(self, path):
-        '''
-        Read input time series as an array
-        '''
-        data_full = pd.read_csv(path, delimiter=',').T
-        data = data_full.values
-        data = np.delete(data, [2, 3], 0)  # delete lattitue & altitude
-        idx = np.where((data[1, :] == 'Korea, South') | (data[1, :] == 'Japan'))
-        data_sub = data[:, idx]
-        data_sub = data_sub[:, 0, :]
-        data_new = data_sub[2:, :].astype(int)
-
-        idx = np.where(data_new[-1, :] > 0)
-        data_new = data_new[:, idx]
-        data_new = data_new[:, 0, :]
-        # data_new[:,1] = np.zeros(data_new.shape[0])
-        city_list = data_sub[0, idx][0]
-        print('city_list', city_list)
-
-        return data_new.T, city_list
-
     def combine_data(self, source):
         if len(source) == 1:
             for path in source:
@@ -498,7 +363,7 @@ class ONMF_timeseries_reconstructor():
         else:
             num_patches_perbatch = batch_size
 
-        X = np.zeros(shape=(x[0], k, x[2], 1))  # 1 * window length * country * num_patches_perbatch
+        X = np.zeros(shape=(x[0], k, x[2], 1))  # 1 * window length * state * num_patches_perbatch
         for i in np.arange(num_patches_perbatch):
             if time_interval_initial is None:
                 a = np.random.choice(x[1] - k)  # starting time of a window patch of length k
@@ -542,22 +407,6 @@ class ONMF_timeseries_reconstructor():
                 X = np.append(X, Y, axis=3)  # x is class ndarray
         return X
 
-    def data_to_patches(self):
-        '''
-
-        args:
-            path (string): Path and filename of input time series data
-            patch_size (int): length of sliding window we are extracting from the time series (data)
-        returns:
-
-        '''
-
-        if DEBUG:
-            print(np.asarray(self.data_test))
-
-        patches = self.extract_random_patches()
-        print('patches.shape=', patches.shape)
-        return patches
 
     def display_dictionary(self, W, cases, if_show, if_save, foldername, filename=None, custom_code4ordering=None):
         k = self.patch_size
